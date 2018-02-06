@@ -3537,4 +3537,68 @@ describe('Parse.User testing', () => {
       expect(results.length).toBe(1);
     }).then(done, done.fail);
   });
+
+  describe('with privilaged user', () => {
+    let adminUser;
+    let normalUser;
+
+    beforeEach((done) => {
+      let adminRole;
+      return new Parse.Role("Administrator", new Parse.ACL()).save(null, { useMasterKey: true })
+        .then(role => adminRole = role)
+        .then(() => Parse.User.signUp('normal_user', 'secure'))
+        .then(loggedInUser => {
+          normalUser = loggedInUser
+          const managementRole = new Parse.Role("managementOf_user" + normalUser.id, new Parse.ACL(normalUser));
+          managementRole.getRoles().add(adminRole);
+
+          return managementRole.save(null, { useMasterKey: true }).then(() => {
+            const userACL = new Parse.ACL();
+            userACL.setPublicReadAccess(true);
+            userACL.setPublicWriteAccess(true); // Shouldn't be enforced
+            userACL.setReadAccess(managementRole, true);
+            userACL.setWriteAccess(managementRole, true);
+
+            return normalUser.setACL(userACL).save(null, { useMasterKey: true });
+          });
+        })
+        .then(() => Parse.User.signUp('administrator', 'secure'))
+        .then(loggedInUser => adminUser = loggedInUser)
+        .then(() => Parse.User.logIn(adminUser.get('username'), 'secure'))
+        .then(() => adminRole.getUsers().add(adminUser).save(null, {useMasterKey: true}))
+        .then(() => done());
+    });
+
+    it('admin should be able to update user', (done) => {
+      normalUser.set("username", "test");
+      normalUser.save().then(done, done.fail);
+    });
+
+    it('public should not be able to update user', (done) => {
+      Parse.User.logOut()
+        .then(() => {
+          normalUser.set("username", "test");
+          return normalUser.save().then(done.fail, done)
+        })
+    });
+
+    it('admin should be able to update user via REST with admin credentials', (done) => {
+      request.post({
+        url: 'http://localhost:8378/1/classes/_User',
+        json: true,
+        headers: {
+          'X-Parse-Application-Id': 'test',
+          'X-Parse-Javascript-Key': 'test',
+          'X-Parse-Session-Token': adminUser.getSessionToken()
+        },
+        body: {
+          username: "test"
+        }
+      }, function(err, res, body) {
+        expect(body.status).toBe(200);
+        done();
+      });
+    });
+
+  });
 });
